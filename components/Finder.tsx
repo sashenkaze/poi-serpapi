@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import MapPreview from "@/components/MapPreview";
 import PlaceCard from "@/components/PlaceCard";
 import type { GeoResult, Loc, Place } from "@/lib/types";
+import { geocode } from "@/lib/geocode";
+import { fetchPlaces } from "@/lib/serpapi";
 
 const LS_KEY = "serpapi_key";
 
@@ -44,7 +46,7 @@ export default function Finder() {
         setKeyStatus("Key disimpan di browser ini.");
       } else {
         localStorage.removeItem(LS_KEY);
-        setKeyStatus("Key dihapus. Pencarian akan memakai key dari env server.");
+        setKeyStatus("Key dihapus. Pencarian akan memakai key Worker.");
       }
     } catch {
       setKeyStatus("Gagal menyimpan key (localStorage tidak tersedia).");
@@ -55,9 +57,7 @@ export default function Finder() {
   async function runGeocode(q: string, signal?: AbortSignal) {
     setGeoLoading(true);
     try {
-      const res = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`, { signal });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Gagal mencari lokasi.");
+      const data = await geocode(q, signal);
       setSuggestions(data);
       setShowSug(true);
       setGeoStatus(data.length ? "" : "Lokasi tidak ditemukan.");
@@ -129,29 +129,24 @@ export default function Finder() {
     setSearchStatus("Mencari...");
     setPlaces(null);
     try {
-      const qs = new URLSearchParams({
-        q: keyword,
-        lat: String(loc.lat),
-        lng: String(loc.lng),
-      });
-      const headers: Record<string, string> = {};
-      if (apiKey.trim()) headers["x-serpapi-key"] = apiKey.trim();
-
-      const res = await fetch(`/api/search?${qs}`, { headers });
-      const data = await res.json();
+      const { ok, data, source } = await fetchPlaces(
+        keyword,
+        String(loc.lat),
+        String(loc.lng),
+        apiKey.trim()
+      );
       setRaw(data);
-      if (!res.ok || data.error) throw new Error(data.error || "Pencarian gagal.");
+      if (!ok || data.error) throw new Error(data.error || "Pencarian gagal.");
 
       const list: Place[] =
         data.local_results ?? (data.place_results ? [data.place_results] : []);
       setPlaces(list);
 
-      const src = res.headers.get("x-key-source");
       const note =
-        src === "env-fallback"
-          ? " Key di input tidak valid, memakai key dari env."
-          : src === "env"
-          ? " (memakai key dari env)"
+        source === "env-fallback"
+          ? " Key di input tidak valid, memakai key Worker."
+          : source === "env"
+          ? " (memakai key Worker)"
           : "";
       setSearchStatus((list.length ? `${list.length} tempat ditemukan.` : "Tidak ada hasil.") + note);
     } catch (e) {
@@ -181,16 +176,15 @@ export default function Finder() {
             autoComplete="off"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder="Kosongkan untuk memakai key dari env server"
+            placeholder="Kosongkan untuk memakai key dari Cloudflare Worker"
           />
           <button className="primary" onClick={saveKey}>
             Simpan key
           </button>
         </div>
         <p className="hint">
-          Key disimpan di localStorage browser ini. Jika kosong atau tidak valid, aplikasi
-          memakai SERPAPI_KEY dari env server. Untuk aplikasi produksi, jangan minta key
-          dari pengguna.
+          Key yang dimasukkan disimpan di localStorage browser ini. Jika kosong atau tidak
+          valid, aplikasi memakai key yang disimpan di Cloudflare Worker.
         </p>
         {keyStatus && <p className="status">{keyStatus}</p>}
       </section>
